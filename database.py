@@ -6,14 +6,14 @@ logging.config.fileConfig("C:\\Users\\48575\\PycharmProjects\\JSE4\\conf\\loggin
 logger = logging.getLogger('databaseLogger')
 
 
-class FlyDatabase:
-    def __init__(self, source: str, data):
-        self.source = source
+class JSEDatabase:
+    def __init__(self, data, source):
         self.data = data
         self.host = db_info.HOST
         self.database = db_info.DATABASE
         self.user = db_info.USER
         self.password = db_info.PASSWORD
+        self.source = source
         self.conn = None
         self.cur = None
 
@@ -42,47 +42,52 @@ class FlyDatabase:
     def write(self):
         self.connect()
 
-        for i in self.data:
-            if isinstance(i, dict):
+        sql_values = set()
+        for row in self.data:
+            if isinstance(row, dict):
                 sql_statement = '''
-                                    INSERT INTO positions_test (
-                                                        load_id,
-                                                        source, 
-                                                        reg_timestamp, 
-                                                        f_time, 
-                                                        f_flight, 
-                                                        f_start_airport, 
-                                                        f_dest_airport, 
-                                                        f_state
-                                                        )
-                                                VALUES (
-                                                        nextval('load_id_seq'),
-                                                        %s,
-                                                        CURRENT_TIMESTAMP,
-                                                        %s,
-                                                        %s,
-                                                        %s,
-                                                        %s,
-                                                        %s
-                                                        )                                      
-                '''
+                                INSERT INTO 
+                                            positions_test(position_id,
+                                            url,
+                                            title,
+                                            description,
+                                            key_words,
+                                            source_name,
+                                            category,
+                                            salary,
+                                            date_registered,
+                                            type_of_work,
+                                            experience,
+                                            employment_type,
+                                            operating_mode,
+                                            company_name
+                                            ) 
+                    VALUES(default, %s, %s, %s, %s, %s, %s, %s, CURRENT_DATE , %s,%s,%s,%s,%s)
+                    ON CONFLICT (url) DO UPDATE SET date_registered = CURRENT_DATE;
+                    '''
                 try:
-                    sql_values = (self.source,
-                                  i['date'],
-                                  i['flight'],
-                                  i['start_airport'],
-                                  i['destination'],
-                                  i['status']
+                    sql_values = (row['url'],
+                                  row['title'],
+                                  row['description'],
+                                  row['key_words'],
+                                  row['source_name'],
+                                  row['category'],
+                                  row['salary'],
+                                  row['type_of_work'],
+                                  row['experience'],
+                                  row['employment_type'],
+                                  row['operating_mode'],
+                                  row['company_name']
                                   )
                 except KeyError as e:
                     with open(f'files\\error_rows_{self.source}.txt', 'a+', encoding='utf-8') as file:
-                        file.write(str(i) + '\n')
+                        file.write(str(row) + '\n')
                         logger.critical('KeyError: Missing key in data dictionary')
                         logger.exception(f'Exception : {e}')
                     continue
                 except Exception as e:
                     with open(f'files\\error_rows_{self.source}.txt', 'a+', encoding='utf-8') as file:
-                        file.write(str(i) + '\n')
+                        file.write(str(row) + '\n')
                     logger.critical('Error: Something wrong with the data. Values stored to ')
                     logger.exception(f'Exception : {e}')
 
