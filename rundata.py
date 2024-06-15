@@ -14,3 +14,11 @@ just_join_it = extractdata.DataProcessingJJI(
                 )
 just_join_it.run()
 
+stepstone = extractdata.DataProcessingST(
+    url_list=config.URLS_STEPSTONE,
+    main_url=config.MAIN_ST,
+    source_name='stepstone',
+    selenium=True,
+    cookies_selector=config.COOKIES_ST
+)
+stepstone.run()

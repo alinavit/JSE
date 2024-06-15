@@ -1,23 +1,59 @@
-from bs4 import BeautifulSoup
 import requests
 import database
 import logging.config
+import time
+
+from selenium import webdriver
+from selenium.webdriver.chrome.service import Service
+from webdriver_manager.chrome import ChromeDriverManager
+from selenium.webdriver.chrome.options import Options
+from selenium.webdriver.common.by import By
+
+from bs4 import BeautifulSoup
+
+import config
 
 logging.config.fileConfig('conf/logging.conf')
 logger = logging.getLogger('DataProcessing')
 
 
 class DataProcessing:
-    def __init__(self, url_list, selenium=False, main_url='', source_name='na'):
+    def __init__(self, url_list, selenium=False, main_url='', source_name='na', cookies_selector=None):
         self.url_list = url_list
         self.selenium = selenium
         self.main_url = main_url
         self.source_name = source_name
+        self.cookies_selector = cookies_selector
 
         self.soup = list()
 
-    def extract_selenium(self):
-        pass
+    def cookies_accept(self, driver):
+        if self.cookies_selector:
+            accept_cookies = driver.find_element(By.CSS_SELECTOR, self.cookies_selector)
+            accept_cookies.click()
+            time.sleep(3)
+
+    def extract_selenium(self, link=None):
+        # main page read
+        if link is None:
+            for url in self.url_list:
+                driver = webdriver.Chrome(service=Service(ChromeDriverManager().install()))
+                driver.get(url)
+                time.sleep(3)
+                self.cookies_accept(driver=driver)
+                page_source = driver.page_source
+                self.soup.append(BeautifulSoup(page_source, 'lxml'))
+                driver.quit()
+        # offer read
+        else:
+            driver = webdriver.Chrome(service=Service(ChromeDriverManager().install()))
+            driver.get(link)
+            time.sleep(3)
+            self.cookies_accept(driver=driver)
+            page_source = driver.page_source
+            soup_main = BeautifulSoup(page_source, 'lxml')
+            driver.quit()
+            return soup_main
 
     def extract_requests(self):
         for url in self.url_list:
@@ -35,7 +71,7 @@ class DataProcessing:
 
     def run(self):
         if self.selenium:
-            pass
+            self.extract_selenium()
         else:
             self.extract_requests()
 
@@ -116,5 +152,61 @@ class DataProcessingJJI(DataProcessing):
 
                 data.append(row)
                 logging.info(f'Successfully fetched for: {row["title"]}')
+
+        return data
+
+
+class DataProcessingST(DataProcessing):
+    def __init__(self, url_list, selenium=False, main_url='', source_name='na', cookies_selector=None):
+        super().__init__(url_list, selenium, main_url, source_name, cookies_selector)
+
+        self.soup = list()
+
+    def transform(self):
+        data = []
+
+        # PARSE GENERAL PAGE FOR IMPORTANT INFORMATION
+        for url, page in zip(self.url_list, self.soup):
+            soup_offer = None
+
+            for i in page.find_all('div', class_='res-urswt'):
+                row = config.ROW.copy()
+                try:
+                    row['title'] = i.h2.text
+                    row['url'] = self.main_url + i.h2.a['href']
+                    row['company_name'] = i.find('span', class_='res-btchsq').text
+                    op_mode = i.find('span', class_='res-1qh7elo').text
+
+                    if i.find('span', attrs={'data-at': 'job-item-work-from-home'}) is not None:
+                        op_mode2 = i.find('span', attrs={'data-at': 'job-item-work-from-home'}).text
+                        row['operating_mode'] = op_mode + ' ' + op_mode2
+
+                        # PARSE DIRECT JOB PAGE FOR INFORMATION
+                        soup_offer = self.extract_selenium(link=row['url'])
+
+                except Exception as e:
+                    logging.critical(f'Error extracting {url} using selenium')
+                    logging.exception(f'Exception: {e}')
+
+                try:
+                    if soup_offer:
+                        # employment_type_st
+                        for emp_type in soup_offer.find_all('li',
+                                                            class_='job-ad-display-ve6qfw '
+                                                                   'at-listing__list-icons_contract-type'):
+                            if emp_type:
+                                row['employment_type'] = emp_type.find('span', class_='job-ad-display-1whr5zf').text
+
+                        # description
+                        for desc in soup_offer.find_all('div', attrs={'data-at': 'job-ad-content'}):
+                            row['description'] = desc.text
+                except Exception as e:
+                    logging.critical(f'Error occurred extracting details')
+                    logging.exception(f'Exception: {e}')
+
+                row['source_name'] = self.source_name
+                row['category'] = url
+
+                data.append(row)
 
         return data
