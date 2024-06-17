@@ -210,3 +210,69 @@ class DataProcessingST(DataProcessing):
                 data.append(row)
 
         return data
+
+
+class DataProcessingNFJ(DataProcessing):
+    def __init__(self, url_list, selenium=False, main_url='', source_name='na', cookies_selector=None):
+        super().__init__(url_list, selenium, main_url, source_name, cookies_selector)
+
+        self.soup = list()
+
+    def transform(self):
+        data = []
+        for url, page in zip(self.url_list, self.soup):
+            for i in page.find_all('a'):
+                for x in i.find_all('aside', class_='tw-w-full'):
+                    row = config.ROW.copy()
+
+                    row['title'] = i.header.text
+                    row['salary'] = i.find('nfj-posting-item-salary').text
+                    row['company_name'] = i.footer.text
+                    row['url'] = self.main_url + i['href']
+
+                    req = requests.get(row['url']).text
+                    soup_details = BeautifulSoup(req, 'lxml')
+
+                    ## EMPLOYMENT TYPE
+                    for typ in soup_details.find_all('div', class_='ng-star-inserted'):
+                        if typ.find('common-posting-salaries-list'):
+                            employent_type = typ.find('common-posting-salaries-list').text
+
+                            employment_type = employent_type.replace('oblicz "na rękę" ', '').replace('oblicz netto ',
+                                                                                                      '').replace('PLN',
+                                                                                                                  '')
+                            employment_type = re.sub('\d+\s', '', employment_type)
+                            employment_type = re.sub('\s+', ' ', employment_type)
+                            employment_type = employment_type.replace('–', '')
+                            row['employment_type'] = employment_type
+
+                    ##category
+                    category = ''
+                    for cat in soup_details.find_all('div', class_='tw-flex flex-wrap ng-star-inserted'):
+                        row['category'] = cat + i.text + ' '
+
+                    # experience
+
+                    for exp in soup_details.find_all('span', class_='mr-10 font-weight-medium ng-star-inserted'):
+                        experience = i.text
+
+                    ## skills
+
+                    skills = []
+                    for i in soup_details.find_all('li',
+                                            class_='tw-btn tw-btn-xs tw-text-sm tw-font-normal tw-text-teal tw-border-2 tw-border-teal tw-whitespace-nowrap ng-star-inserted'):
+                        skills.append(i.text)
+
+                    row['key_words'] = skills
+
+                    # description
+
+                    description = ''
+                    for i in soup_details.find_all('section'):
+                        row['description'] = description + i.text + ' '
+
+                    data.append(row)
+        return data
+
+
+
