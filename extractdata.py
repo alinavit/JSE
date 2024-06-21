@@ -1,7 +1,9 @@
 import requests
 import database
+import logging
 import logging.config
 import time
+import re
 
 from selenium import webdriver
 from selenium.webdriver.chrome.service import Service
@@ -11,10 +13,11 @@ from selenium.webdriver.common.by import By
 
 from bs4 import BeautifulSoup
 
-import config
+import config2
 
-logging.config.fileConfig('conf/logging.conf')
-logger = logging.getLogger('DataProcessing')
+logging.config.fileConfig("C:\\Users\\48575\\PycharmProjects\\JSE4\\conf\\logging.conf")
+logger = logging.getLogger('dataProcessing')
+logger.info('Data Processing')
 
 
 class DataProcessing:
@@ -61,10 +64,10 @@ class DataProcessing:
                 web_page = requests.get(url).text
                 self.soup.append(BeautifulSoup(web_page, 'lxml'))
 
-                logging.info(f'Data fetched from {url}')
+                logger.info(f'Data fetched from {url}')
             except Exception as e:
-                logging.critical(f'Error occurred fetching data from {url}')
-                logging.exception(f'Exception: {e}')
+                logger.critical(f'Error occurred fetching data from {url}')
+                logger.exception(f'Exception: {e}')
 
     def transform(self):
         pass
@@ -88,11 +91,12 @@ class DataProcessingJJI(DataProcessing):
 
     def transform(self):
         data = []
+        logging.info('Test transform')
         for url, page in zip(self.url_list, self.soup):
 
             jobs_list = page.find_all('div', class_='css-2crog7')
             if len(jobs_list) == 0:
-                logging.warning('jobs_list variable is empty. Check if anything changed in the source')
+                logger.warning('jobs_list variable is empty. Check if anything changed in the source')
 
             for job in jobs_list:
                 row = dict()
@@ -108,8 +112,8 @@ class DataProcessingJJI(DataProcessing):
                     # offer_date = job.find('div', class_='css-1wv2lui').text
                     row['company_name'] = job.find('div', class_='css-aryx9u').text
                 except Exception as e:
-                    logging.critical('Data could not be fetched')
-                    logging.exception(f'Exception: {e}')
+                    logger.critical('Data could not be fetched')
+                    logger.exception(f'Exception: {e}')
 
                 row['type_of_work'] = ''
                 row['experience'] = ''
@@ -137,21 +141,20 @@ class DataProcessingJJI(DataProcessing):
                         key_words_list.append(i.text)
                     row['key_words'] = key_words_list
 
-                    # FULL DESCRIPTION
                     description = details_soup.find_all('div', class_='css-6sm4q6')
                     description_text = ''
                     for i in description:
                         description_text = description_text + i.text + ' '
                     row['description'] = description_text
                 except Exception as e:
-                    logging.critical('Error occurred fetching job details')
-                    logging.exception(f'Exception: {e}')
+                    logger.critical('Error occurred fetching job details')
+                    logger.exception(f'Exception: {e}')
 
                 row['source_name'] = self.source_name
                 row['category'] = url
 
                 data.append(row)
-                logging.info(f'Successfully fetched for: {row["title"]}')
+                logger.info(f'Successfully fetched for: {row["title"]}')
 
         return data
 
@@ -170,7 +173,7 @@ class DataProcessingST(DataProcessing):
             soup_offer = None
 
             for i in page.find_all('div', class_='res-urswt'):
-                row = config.ROW.copy()
+                row = config2.ROW.copy()
                 try:
                     row['title'] = i.h2.text
                     row['url'] = self.main_url + i.h2.a['href']
@@ -185,8 +188,8 @@ class DataProcessingST(DataProcessing):
                         soup_offer = self.extract_selenium(link=row['url'])
 
                 except Exception as e:
-                    logging.critical(f'Error extracting {url} using selenium')
-                    logging.exception(f'Exception: {e}')
+                    logger.critical(f'Error extracting {url} using selenium')
+                    logger.exception(f'Exception: {e}')
 
                 try:
                     if soup_offer:
@@ -201,8 +204,8 @@ class DataProcessingST(DataProcessing):
                         for desc in soup_offer.find_all('div', attrs={'data-at': 'job-ad-content'}):
                             row['description'] = desc.text
                 except Exception as e:
-                    logging.critical(f'Error occurred extracting details')
-                    logging.exception(f'Exception: {e}')
+                    logger.critical(f'Error occurred extracting details')
+                    logger.exception(f'Exception: {e}')
 
                 row['source_name'] = self.source_name
                 row['category'] = url
@@ -218,58 +221,46 @@ class DataProcessingNFJ(DataProcessing):
 
         self.soup = list()
 
+
     def transform(self):
         data = []
         for url, page in zip(self.url_list, self.soup):
-            for i in page.find_all('a'):
-                for x in i.find_all('aside', class_='tw-w-full'):
-                    row = config.ROW.copy()
+            page_deeper = page.find_all('div', class_='list-container ng-star-inserted')
+            for part in page_deeper:
+                for jsection in part.find_all('a'):
+                    row = config2.ROW.copy()
 
-                    row['title'] = i.header.text
-                    row['salary'] = i.find('nfj-posting-item-salary').text
-                    row['company_name'] = i.footer.text
-                    row['url'] = self.main_url + i['href']
+                    row['title'] = jsection.aside.header.text
+                    row['salary'] = jsection.find('nfj-posting-item-salary').text
+                    row['company_name'] = jsection.footer.text
+                    row['url'] = self.main_url + jsection['href']
 
                     req = requests.get(row['url']).text
                     soup_details = BeautifulSoup(req, 'lxml')
+                    try:
+                        row['employment_type'] = soup_details.find('common-posting-salaries-list' ).text
+                    except AttributeError as e:
+                        logger.warning(f'Could not extract employment_type for {row["url"]}')
+                        logger.exception(f'Details: {e}')
 
-                    ## EMPLOYMENT TYPE
-                    for typ in soup_details.find_all('div', class_='ng-star-inserted'):
-                        if typ.find('common-posting-salaries-list'):
-                            employent_type = typ.find('common-posting-salaries-list').text
+                    try:
+                        row['category'] = soup_details.find('a', attrs={'data-cy':'JobOffer_Category'}).text
+                        row['experience'] = soup_details.find('span',
+                                                          class_ = 'mr-10 font-weight-medium ng-star-inserted').text
+                        row['key_words'] = soup_details.find('section', attrs = {'branch': 'musts'}).text
+                    except AttributeError as e:
+                        logger.warning(f'Could not extract details for {row["url"]}')
+                        logger.exception(f'Details: {e}')
 
-                            employment_type = employent_type.replace('oblicz "na rękę" ', '').replace('oblicz netto ',
-                                                                                                      '').replace('PLN',
-                                                                                                                  '')
-                            employment_type = re.sub('\d+\s', '', employment_type)
-                            employment_type = re.sub('\s+', ' ', employment_type)
-                            employment_type = employment_type.replace('–', '')
-                            row['employment_type'] = employment_type
+                    try:
+                        description = ''
+                        for i in soup_details.find_all('section'):
+                            description = description + i.text + ' '
 
-                    ##category
-                    category = ''
-                    for cat in soup_details.find_all('div', class_='tw-flex flex-wrap ng-star-inserted'):
-                        row['category'] = cat + i.text + ' '
-
-                    # experience
-
-                    for exp in soup_details.find_all('span', class_='mr-10 font-weight-medium ng-star-inserted'):
-                        experience = i.text
-
-                    ## skills
-
-                    skills = []
-                    for i in soup_details.find_all('li',
-                                            class_='tw-btn tw-btn-xs tw-text-sm tw-font-normal tw-text-teal tw-border-2 tw-border-teal tw-whitespace-nowrap ng-star-inserted'):
-                        skills.append(i.text)
-
-                    row['key_words'] = skills
-
-                    # description
-
-                    description = ''
-                    for i in soup_details.find_all('section'):
-                        row['description'] = description + i.text + ' '
+                        row['description'] = description
+                    except AttributeError as e:
+                        logger.warning(f'Could not extract details for {row["url"]}')
+                        logger.exception(f'Details: {e}')
 
                     data.append(row)
         return data
