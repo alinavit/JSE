@@ -266,4 +266,74 @@ class DataProcessingNFJ(DataProcessing):
         return data
 
 
+class DataProcessingPR(DataProcessing):
+    def __init__(self, url_list, selenium=False, main_url='', source_name='na', cookies_selector=None):
+        super().__init__(url_list, selenium, main_url, source_name, cookies_selector)
+
+        self.soup = list()
+
+    def transform(self):
+        import json
+        data = []
+        for cat_link in self.url_list:
+
+            web = requests.get(cat_link).text
+            soup = BeautifulSoup(web, 'lxml')
+
+            info_doc = soup.find('script', attrs={'id': '__NEXT_DATA__'}).text
+            json_data = json.loads(info_doc)
+
+            props = json_data['props']['pageProps']['data']
+            jobs = props['jobOffers']['groupedOffers']
+
+            logger.info(f'Fetched data from {cat_link}')
+
+            for job_unit in jobs:
+                row = config2.ROW.copy()
+
+                row['title'] = job_unit['jobTitle']
+                row['url'] = job_unit['offers'][0]['offerAbsoluteUri']
+                row['key_words'] = job_unit['technologies']
+                row['company_name'] = job_unit['companyName']
+                row['salary'] = job_unit['salaryDisplayText']
+                row['experience'] = job_unit['positionLevels']
+                row['employment_type'] = job_unit['typesOfContract']
+                row['operating_mode'] = str(job_unit['workModes'])
+                row['employment_type'] = job_unit['workSchedules']
+
+                #### DESCRIPTION #####
+
+                r = requests.get(row['url']).text
+                soup = BeautifulSoup(r, from_encoding='utf-8')
+
+                desc1 = ''
+                desc2 = ''
+                desc3 = ''
+
+                try:
+                    desc1 = soup.find('div', attrs={'data-scroll-id': 'responsibilities-1'}).text
+                except Exception as e:
+                    logger.warning(f'Description has been not extracted. Details: {e}')
+                    pass
+                try:
+                    desc2 = soup.find('div', attrs={'data-scroll-id': 'requirements-1'}).text
+                except Exception as e:
+                    logger.warning(f'Description has been not extracted. Details: {e}')
+                    pass
+                try:
+                    desc3 = soup.find('div', attrs={'data-scroll-id': 'offered-1'}).text
+                except Exception as e:
+                    logger.warning(f'Description has been not extracted. Details: {e}')
+                    pass
+
+                description = desc1 + ' ' + desc2 + ' ' + desc3
+
+                data.append(row)
+
+        return data
+
+
+
+
+
 
