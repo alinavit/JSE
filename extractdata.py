@@ -3,7 +3,7 @@ import database
 import logging
 import logging.config
 import time
-import re
+import json
 
 from selenium import webdriver
 from selenium.webdriver.chrome.service import Service
@@ -82,9 +82,7 @@ class DataProcessing:
         else:
             self.extract_requests()
 
-        data = self.transform()
-
-        database.JSEDatabase(data=data, source=self.source_name).write()
+        self.transform()
 
 
 class DataProcessingJJI(DataProcessing):
@@ -126,12 +124,17 @@ class DataProcessingJJI(DataProcessing):
                     row['description'] = BeautifulSoup(details_in_json['props']['pageProps']['offer']['body'], 'lxml').text
 
                     for emp_type in details_in_json['props']['pageProps']['offer']['employmentTypes']:
-                        sal_from = str(emp_type['fromPln'])
+                        sal_from = emp_type['fromPln']
                         if sal_from is None:
                             sal_from = ''
-                        sal_to = str(emp_type['toPln'])
+                        elif isinstance(sal_from, int):
+                            sal_from = str(sal_from)
+
+                        sal_to = emp_type['toPln']
                         if sal_to is None:
                             sal_to = ''
+                        elif isinstance(sal_to, int):
+                            sal_to = str(sal_to)
                         sal = sal_from + ' - ' + sal_to
 
                         row['salary'] = row['salary'] + sal
@@ -149,7 +152,9 @@ class DataProcessingJJI(DataProcessing):
                 data.append(row)
                 logger.info(f'Successfully fetched for: {row["title"]}')
 
-        return data
+                if len(data) == 1:
+                    database.JSEDatabase(data=data, source=self.source_name).write()
+                    data = []
 
 
 class DataProcessingST(DataProcessing):
@@ -203,9 +208,12 @@ class DataProcessingST(DataProcessing):
                 row['source_name'] = self.source_name
                 row['category'] = url
 
+                logger.info(f"Fetched data for {row['title']}")
                 data.append(row)
 
-        return data
+                if len(data) == 1:
+                    database.JSEDatabase(data=data, source=self.source_name).write()
+                    data = []
 
 
 class DataProcessingNFJ(DataProcessing):
@@ -222,40 +230,93 @@ class DataProcessingNFJ(DataProcessing):
                 for jsection in part.find_all('a'):
                     row = config2.ROW.copy()
 
-                    row['title'] = jsection.aside.header.text
-                    row['salary'] = jsection.find('nfj-posting-item-salary').text
-                    row['company_name'] = jsection.footer.text
                     row['url'] = self.main_url + jsection['href']
+
+                    time.sleep(2)
 
                     req = requests.get(row['url']).text
                     soup_details = BeautifulSoup(req, 'lxml')
-                    try:
-                        row['employment_type'] = soup_details.find('common-posting-salaries-list').text
-                    except AttributeError as e:
-                        logger.warning(f'Could not extract employment_type for {row["url"]}')
-                        logger.exception(f'Details: {e}')
+
+                    data_as_txt = soup_details.find('script', attrs={'id': 'serverApp-state'}).text
+                    data_as_json = json.loads(data_as_txt)
+
+                    key = ''
+
+                    for k in data_as_json.keys():
+                        if not isinstance(data_as_json[k], dict):
+                            continue
+                        elif 'b' not in list(data_as_json[k].keys()):
+                            continue
+                        elif not isinstance(data_as_json[k]['b'], dict):
+                            continue
+                        elif 'title' not in data_as_json[k]['b'].keys():
+                            continue
+                        else:
+                            key = k
 
                     try:
-                        row['category'] = soup_details.find('a', attrs={'data-cy': 'JobOffer_Category'}).text
-                        row['experience'] = soup_details.find('span',
-                                                              class_='mr-10 font-weight-medium ng-star-inserted').text
-                        row['key_words'] = soup_details.find('section', attrs={'branch': 'musts'}).text
-                    except AttributeError as e:
-                        logger.warning(f'Could not extract details for {row["url"]}')
-                        logger.exception(f'Details: {e}')
+                        row['title'] = data_as_json[key]['b']['title']
+                    except Exception as e:
+                        logger.warning(f'Problem fetching title: {e} ')
 
                     try:
-                        description = ''
-                        for i in soup_details.find_all('section'):
-                            description = description + i.text + ' '
+                        row['company_name'] = data_as_json[key]['b']['company']['name']
+                    except Exception as e:
+                        logger.warning(f'Problem fetching company name: {e} ')
+                    try:
+                        row['operating_mode'] = data_as_json[key]['b']['location']['places'][0]['city']
+                    except Exception as e:
+                        logger.warning(f'Problem fetching operating mode {e} ')
+                    try:
+                        row['employment_type'] = list(data_as_json[key]['b']['essentials']['originalSalary']['types'].keys())
+                    except Exception as e:
+                        logger.warning(f'Problem fetching employment type: {e} ')
 
-                        row['description'] = description
-                    except AttributeError as e:
-                        logger.warning(f'Could not extract details for {row["url"]}')
-                        logger.exception(f'Details: {e}')
+                    descript_tasks = ''
+                    descript_desc = ''
+                    try:
+                        descript_tasks = str(data_as_json[key]['b']['specs']['dailyTasks'])
+                    except Exception as e:
+                        logger.warning(f'Problem fetching description (tasks): {e} ')
 
+                    try:
+                        descript_desc = str(BeautifulSoup(data_as_json[key]['b']['requirements']['description'], 'lxml').text)
+                    except Exception as e:
+                        logger.warning(f'Problem fetching description (desc): {e} ')
+
+                    row['description'] = descript_tasks + descript_desc
+
+                    try:
+                        row['salary'] = [val['range'] for key, val in data_as_json[key]['b']['essentials']['originalSalary']['types'].items()]
+                    except Exception as e:
+                        logger.warning(f'Problem fetching salary: {e} ')
+                    try:
+                        row['experience'] = data_as_json[key]['b']['basics']['seniority']
+                    except Exception as e:
+                        logger.warning(f'Problem fetching experience: {e} ')
+                    try:
+                        row['key_words'] = [skill['value'] for skill in data_as_json[key]['b']['requirements']['musts']]
+                    except Exception as e:
+                        logger.warning(f'Problem fetching key words: {e} ')
+
+                    row['source_name' ]= self.source_name
+
+                    try:
+                        row['category'] = data_as_json[key]['b']['basics']['category']
+                    except Exception as e:
+                        logger.warning(f'Problem fetching category: {e} ')
+                    try:
+                        tp_work_txt = soup_details.find('script', attrs={'type': 'application/ld+json'}).text
+                        tp_work_json = json.loads(tp_work_txt)
+                        row['type_of_work'] = tp_work_json['@graph'][2]['jobLocationType']
+                    except Exception as e:
+                        logger.warning(f'Problem fetching type of work: {e} ')
+
+                    logger.info(f'Successfully fetched data for {row["title"]}')
                     data.append(row)
-        return data
+                    if len(data) == 1:
+                        database.JSEDatabase(data=data, source=self.source_name).write()
+                        data = []
 
 
 class DataProcessingPR(DataProcessing):
@@ -318,14 +379,56 @@ class DataProcessingPR(DataProcessing):
                     logger.warning(f'Description has been not extracted. Details: {e}')
                     pass
 
-                description = desc1 + ' ' + desc2 + ' ' + desc3
+                row['description'] = desc1 + ' ' + desc2 + ' ' + desc3
 
                 data.append(row)
 
         return data
 
 
+class DataProcessingIND(DataProcessing):
+    def __init__(self, url_list, selenium=False, main_url='', source_name='na', cookies_selector=None):
+        super().__init__(url_list, selenium, main_url, source_name, cookies_selector)
 
+        self.soup = list()
 
+    def transform(self):
+        data = []
+        for url, page in zip(self.url_list, self.soup):
+            page_detail = page.find_all('div', class_='job_seen_beacon')
 
+            row = config2.ROW.copy()
 
+            logger.info(f'Data fetched for {url}')
+
+            for offer in page_detail:
+                row['title'] = offer.find('h2').text
+                row['url'] = self.main_url + offer.find('h2').a['href']
+                row['company_name'] = offer.find('span', attrs={'data-testid': 'company-name'}).text
+                # row['type_of_work'] = offer.find('div', attrs={'data-testid': 'text-location'}).text
+
+                # offer OPEN
+                offer_soup = self.extract_selenium()
+                try:
+                    row['type_of_work'] = offer_soup.find(
+                        'div',
+                        attrs={'data-testid': 'jobsearch-OtherJobDetailsContainer'}).text
+
+                except Exception as e:
+                    logger.warning(f'Type of work has not been extracted. Details: {e}')
+
+                try:
+                    row['description'] = offer_soup.find('div', attrs={'id': 'jobDescriptionText'}).text
+                except Exception as e:
+                    logger.warning(f'Description has not been extracted. Details: {e}')
+
+                if 'junior' in row['title'] or 'junior' in row['description'].lower():
+                    row['experience'] = 'junior'
+                elif 'senior' in row['title'] or 'senior' in row['description'].lower():
+                    row['experience'] = 'senior'
+                else:
+                    row['experience'] = 'middle'
+
+                data.append(row)
+
+        return data
