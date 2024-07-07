@@ -40,7 +40,9 @@ class DataProcessing:
         # main page read
         if link is None:
             for url in self.url_list:
-                driver = webdriver.Chrome(service=Service(ChromeDriverManager().install()))
+                options = Options()
+                options.add_argument('--headless')
+                driver = webdriver.Chrome(service=Service(ChromeDriverManager().install()), options=options)
                 driver.get(url)
                 time.sleep(3)
                 self.cookies_accept(driver=driver)
@@ -49,7 +51,9 @@ class DataProcessing:
                 driver.quit()
         # offer read
         else:
-            driver = webdriver.Chrome(service=Service(ChromeDriverManager().install()))
+            options = Options()
+            options.add_argument('--headless')
+            driver = webdriver.Chrome(service=Service(ChromeDriverManager().install()), options=options)
             driver.get(link)
             time.sleep(3)
             self.cookies_accept(driver=driver)
@@ -94,64 +98,53 @@ class DataProcessingJJI(DataProcessing):
         logging.info('Test transform')
         for url, page in zip(self.url_list, self.soup):
 
-            jobs_list = page.find_all('div', class_='css-2crog7')
+            jobs_list = page.find_all('div', attrs={'item': '[object Object]'})
             if len(jobs_list) == 0:
-                logger.warning('jobs_list variable is empty. Check if anything changed in the source')
+                logger.warning('Cannot fetch data from source. Check if anything changed in the source')
 
             for job in jobs_list:
-                row = dict()
+                row = config2.ROW.copy()
 
-                row['url'] = ''
-                row['title'] = ''
-                row['salary'] = ''
-                row['company_name'] = ''
                 try:
                     row['url'] = self.main_url + job.a['href']
-                    row['title'] = job.find('div', class_='MuiBox-root css-6vg4fr').h2.text
-                    row['salary'] = job.find('div', class_='css-17pspck').text
-                    # offer_date = job.find('div', class_='css-1wv2lui').text
-                    row['company_name'] = job.find('div', class_='css-aryx9u').text
                 except Exception as e:
-                    logger.critical('Data could not be fetched')
+                    logger.critical('url could not be fetched')
                     logger.exception(f'Exception: {e}')
 
-                row['type_of_work'] = ''
-                row['experience'] = ''
-                row['employment_type'] = ''
-                row['operating_mode'] = ''
-                row['key_words'] = ''
-                row['description'] = ''
                 try:
+                    time.sleep(3)
                     job_details = requests.get(row['url']).text
                     details_soup = BeautifulSoup(job_details, 'lxml')
 
-                    # Details from job offer load
-                    attr = details_soup.find_all('div', class_='css-6q28fo')
-                    attr_list = []
-                    for i in attr:
-                        attr_list.append(i.text)
-                    row['type_of_work'] = attr_list[0]
-                    row['experience'] = attr_list[1]
-                    row['employment_type'] = attr_list[2]
-                    row['operating_mode'] = attr_list[3]
+                    details_in_txt = details_soup.find('script', attrs={'id': '__NEXT_DATA__'}).text
+                    details_in_json = json.loads(details_in_txt)
 
-                    key_words = details_soup.find_all('div', class_='css-cjymd2')
-                    key_words_list = []
-                    for i in key_words:
-                        key_words_list.append(i.text)
-                    row['key_words'] = key_words_list
+                    row['title'] = details_in_json['props']['pageProps']['offer']['title']
+                    row['company_name'] = details_in_json['props']['pageProps']['offer']['companyName']
+                    row['operating_mode'] = details_in_json['props']['pageProps']['offer']['workplaceType']['value']
+                    row['employment_type'] = ','.join([str(i['type']) for i in details_in_json['props']['pageProps']['offer']['employmentTypes']])
+                    row['description'] = BeautifulSoup(details_in_json['props']['pageProps']['offer']['body'], 'lxml').text
 
-                    description = details_soup.find_all('div', class_='css-6sm4q6')
-                    description_text = ''
-                    for i in description:
-                        description_text = description_text + i.text + ' '
-                    row['description'] = description_text
+                    for emp_type in details_in_json['props']['pageProps']['offer']['employmentTypes']:
+                        sal_from = str(emp_type['fromPln'])
+                        if sal_from is None:
+                            sal_from = ''
+                        sal_to = str(emp_type['toPln'])
+                        if sal_to is None:
+                            sal_to = ''
+                        sal = sal_from + ' - ' + sal_to
+
+                        row['salary'] = row['salary'] + sal
+
+                    row['type_of_work'] = details_in_json['props']['pageProps']['offer']['workingTime']['label']
+                    row['experience'] = details_in_json['props']['pageProps']['offer']['experienceLevel']['value']
+                    row['key_words'] = [str(skill['name'] )for skill in details_in_json['props']['pageProps']['offer']['requiredSkills']]
+                    row['source_name'] = self.source_name
+                    row['category'] = details_in_json['props']['pageProps']['offer']['category']['name']
+
                 except Exception as e:
-                    logger.critical('Error occurred fetching job details')
+                    logger.critical(f"job details for {row['url']} not detected")
                     logger.exception(f'Exception: {e}')
-
-                row['source_name'] = self.source_name
-                row['category'] = url
 
                 data.append(row)
                 logger.info(f'Successfully fetched for: {row["title"]}')
@@ -221,7 +214,6 @@ class DataProcessingNFJ(DataProcessing):
 
         self.soup = list()
 
-
     def transform(self):
         data = []
         for url, page in zip(self.url_list, self.soup):
@@ -238,16 +230,16 @@ class DataProcessingNFJ(DataProcessing):
                     req = requests.get(row['url']).text
                     soup_details = BeautifulSoup(req, 'lxml')
                     try:
-                        row['employment_type'] = soup_details.find('common-posting-salaries-list' ).text
+                        row['employment_type'] = soup_details.find('common-posting-salaries-list').text
                     except AttributeError as e:
                         logger.warning(f'Could not extract employment_type for {row["url"]}')
                         logger.exception(f'Details: {e}')
 
                     try:
-                        row['category'] = soup_details.find('a', attrs={'data-cy':'JobOffer_Category'}).text
+                        row['category'] = soup_details.find('a', attrs={'data-cy': 'JobOffer_Category'}).text
                         row['experience'] = soup_details.find('span',
-                                                          class_ = 'mr-10 font-weight-medium ng-star-inserted').text
-                        row['key_words'] = soup_details.find('section', attrs = {'branch': 'musts'}).text
+                                                              class_='mr-10 font-weight-medium ng-star-inserted').text
+                        row['key_words'] = soup_details.find('section', attrs={'branch': 'musts'}).text
                     except AttributeError as e:
                         logger.warning(f'Could not extract details for {row["url"]}')
                         logger.exception(f'Details: {e}')
@@ -301,10 +293,10 @@ class DataProcessingPR(DataProcessing):
                 row['operating_mode'] = str(job_unit['workModes'])
                 row['employment_type'] = job_unit['workSchedules']
 
-                #### DESCRIPTION #####
-
+                time.sleep(2)
                 r = requests.get(row['url']).text
                 soup = BeautifulSoup(r, from_encoding='utf-8')
+
 
                 desc1 = ''
                 desc2 = ''
