@@ -1,6 +1,5 @@
 import requests
 import database
-import logging
 import logging.config
 import time
 import json
@@ -93,7 +92,7 @@ class DataProcessingJJI(DataProcessing):
 
     def transform(self):
         data = []
-        logging.info('Test transform')
+        logger.info('Test transform')
         for url, page in zip(self.url_list, self.soup):
 
             jobs_list = page.find_all('div', attrs={'item': '[object Object]'})
@@ -120,8 +119,11 @@ class DataProcessingJJI(DataProcessing):
                     row['title'] = details_in_json['props']['pageProps']['offer']['title']
                     row['company_name'] = details_in_json['props']['pageProps']['offer']['companyName']
                     row['operating_mode'] = details_in_json['props']['pageProps']['offer']['workplaceType']['value']
-                    row['employment_type'] = ','.join([str(i['type']) for i in details_in_json['props']['pageProps']['offer']['employmentTypes']])
-                    row['description'] = BeautifulSoup(details_in_json['props']['pageProps']['offer']['body'], 'lxml').text
+                    row['employment_type'] = ','.join([str(i['type']) for i in details_in_json['props']['pageProps']
+                                                                                              ['offer']
+                                                                                              ['employmentTypes']])
+                    row['description'] = BeautifulSoup(details_in_json['props']['pageProps']['offer']['body'], 'lxml') \
+                        .text
 
                     for emp_type in details_in_json['props']['pageProps']['offer']['employmentTypes']:
                         sal_from = emp_type['fromPln']
@@ -141,7 +143,8 @@ class DataProcessingJJI(DataProcessing):
 
                     row['type_of_work'] = details_in_json['props']['pageProps']['offer']['workingTime']['label']
                     row['experience'] = details_in_json['props']['pageProps']['offer']['experienceLevel']['value']
-                    row['key_words'] = [str(skill['name'] )for skill in details_in_json['props']['pageProps']['offer']['requiredSkills']]
+                    row['key_words'] = [str(skill['name']) for skill in
+                                        details_in_json['props']['pageProps']['offer']['requiredSkills']]
                     row['source_name'] = self.source_name
                     row['category'] = details_in_json['props']['pageProps']['offer']['category']['name']
 
@@ -268,7 +271,8 @@ class DataProcessingNFJ(DataProcessing):
                     except Exception as e:
                         logger.warning(f'Problem fetching operating mode {e} ')
                     try:
-                        row['employment_type'] = list(data_as_json[key]['b']['essentials']['originalSalary']['types'].keys())
+                        row['employment_type'] = list(
+                            data_as_json[key]['b']['essentials']['originalSalary']['types'].keys())
                     except Exception as e:
                         logger.warning(f'Problem fetching employment type: {e} ')
 
@@ -280,14 +284,16 @@ class DataProcessingNFJ(DataProcessing):
                         logger.warning(f'Problem fetching description (tasks): {e} ')
 
                     try:
-                        descript_desc = str(BeautifulSoup(data_as_json[key]['b']['requirements']['description'], 'lxml').text)
+                        descript_desc = str(
+                            BeautifulSoup(data_as_json[key]['b']['requirements']['description'], 'lxml').text)
                     except Exception as e:
                         logger.warning(f'Problem fetching description (desc): {e} ')
 
                     row['description'] = descript_tasks + descript_desc
 
                     try:
-                        row['salary'] = [val['range'] for key, val in data_as_json[key]['b']['essentials']['originalSalary']['types'].items()]
+                        row['salary'] = [val['range'] for key, val in
+                                         data_as_json[key]['b']['essentials']['originalSalary']['types'].items()]
                     except Exception as e:
                         logger.warning(f'Problem fetching salary: {e} ')
                     try:
@@ -299,7 +305,7 @@ class DataProcessingNFJ(DataProcessing):
                     except Exception as e:
                         logger.warning(f'Problem fetching key words: {e} ')
 
-                    row['source_name' ]= self.source_name
+                    row['source_name'] = self.source_name
 
                     try:
                         row['category'] = data_as_json[key]['b']['basics']['category']
@@ -349,41 +355,76 @@ class DataProcessingPR(DataProcessing):
                 row['key_words'] = job_unit['technologies']
                 row['company_name'] = job_unit['companyName']
                 row['salary'] = job_unit['salaryDisplayText']
-                row['experience'] = job_unit['positionLevels']
-                row['employment_type'] = job_unit['typesOfContract']
-                row['operating_mode'] = str(job_unit['workModes'])
-                row['employment_type'] = job_unit['workSchedules']
 
                 time.sleep(2)
                 r = requests.get(row['url']).text
-                soup = BeautifulSoup(r, from_encoding='utf-8')
+                soup_details = BeautifulSoup(r, 'lxml')
 
+                data_from_txt = soup_details.find('script', attrs={'id': '__NEXT_DATA__'}).text
+                data_from_json = json.loads(data_from_txt)
 
                 desc1 = ''
                 desc2 = ''
                 desc3 = ''
 
                 try:
-                    desc1 = soup.find('div', attrs={'data-scroll-id': 'responsibilities-1'}).text
+                    desc1 = str(data_from_json['props']['pageProps']['dehydratedState']['queries'][0]['state']['data'][
+                                    'sections'][1]['model']['paragraphs'][0])
                 except Exception as e:
-                    logger.warning(f'Description has been not extracted. Details: {e}')
+                    logger.warning(f'Description1 has been not extracted. Details: {e}')
                     pass
                 try:
-                    desc2 = soup.find('div', attrs={'data-scroll-id': 'requirements-1'}).text
+                    desc2 = str(data_from_json['props']['pageProps']['dehydratedState']['queries'][0]['state']['data'][
+                                    'sections'][2]['model']['bullets'])
                 except Exception as e:
-                    logger.warning(f'Description has been not extracted. Details: {e}')
+                    logger.warning(f'Description2 has been not extracted. Details: {e}')
                     pass
                 try:
-                    desc3 = soup.find('div', attrs={'data-scroll-id': 'offered-1'}).text
+                    desc3 = str(data_from_json['props']['pageProps']['dehydratedState']['queries'][0]['state']['data'][
+                                    'sections'][3]['subSections'][0]['model']['bullets'])
                 except Exception as e:
-                    logger.warning(f'Description has been not extracted. Details: {e}')
+                    logger.warning(f'Description3 has been not extracted. Details: {e}')
                     pass
 
-                row['description'] = desc1 + ' ' + desc2 + ' ' + desc3
+                row['description'] = desc1 + '\n' + desc2 + '\n' + desc3
+
+                try:
+                    row['category'] = [cat['name'] for cat in
+                                       data_from_json['props']['pageProps']['dehydratedState']['queries'][0]['state'][
+                                           'data']['attributes']['categories']]
+                except Exception as e:
+                    logger.warning(f'category has been not extracted. Details: {e}')
+
+                try:
+                    row['operating_mode'] = str(
+                        data_from_json['props']['pageProps']['dehydratedState']['queries'][0]['state']['data'][
+                            'attributes']['employment']['workModes'][0]['code'])
+                except Exception as e:
+                    logger.warning(f'type of work has been not extracted. Details: {e}')
+
+                try:
+                    row['employment_type'] = [contr['name'] for contr in
+                                              data_from_json['props']['pageProps']['dehydratedState']['queries'][0][
+                                                  'state']['data']['attributes']['employment']['typesOfContracts']]
+                except Exception as e:
+                    logger.warning(f'employment_type has been not extracted. Details: {e}')
+
+                try:
+                    row['experience'] = [position_level['name'] for position_level in
+                                         data_from_json['props']['pageProps']['dehydratedState']['queries'][0]['state'][
+                                             'data']['attributes']['employment']['positionLevels']]
+                except Exception as e:
+                    logger.warning(f'employment_type has been not extracted. Details: {e}')
+
+                row['source_name'] = self.source_name
+
+                logger.info(f'Successfully fetched data for {row["title"]}')
 
                 data.append(row)
 
-        return data
+                if len(data) == 1:
+                    database.JSEDatabase(data=data, source=self.source_name).write()
+                    data = []
 
 
 class DataProcessingIND(DataProcessing):
